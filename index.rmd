@@ -1,0 +1,111 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+---
+title: 'PML Project #1'
+date: "December 24, 2015"
+output: html_document
+---
+## Setup
+preload required libraries
+``` {r}
+library(caret)
+library(randomForest)
+library(rpart)
+```
+
+## Load and clean the data
+```{r}
+if (!file.exists("pml-training.csv")) {
+  download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile="./pml-training.csv")
+}
+if (!file.exists("pml-testing.csv")) {
+  download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "pml-testing.csv")
+}
+
+training <- read.csv ("pml-training.csv", na.strings=c("", "NA"))
+testing <- read.csv ("pml-testing.csv",  na.strings=c("", "NA"))
+dim(training)
+```
+
+First, remove features where at least 50% of the values are NA
+``` {r}
+num_obs = dim(training)[1]
+training_reduced1 <- training[ , colSums(is.na(training)) < (num_obs * 0.5)]
+dim(training_reduced1)
+```
+
+Remove first seven features that are bookkeping rather than sensor data
+``` {r}
+training_reduced2 = training_reduced1[-c(1:7)]
+dim(training_reduced2)
+```
+
+Remove features with near zero variance
+``` {r}
+ZV = nearZeroVar(training_reduced2, saveMetrics = TRUE)
+training_reduced3 = training_reduced2[,ZV[, 'nzv']==0]
+dim(training_reduced3)
+```
+That didn't seem to help much but it's a good idea generally, so we keep it.
+
+## Building models
+Split the training set into train and validate sets
+``` {r}
+set.seed(1337)
+train_set <- createDataPartition(y=training_reduced3$classe, p=0.7, list=FALSE)
+train <- training_reduced3[train_set, ]
+validate <- training_reduced3[-train_set, ]
+dim (train)
+dim(validate)
+```
+
+Let's make a simple model and see how it does
+``` {r}
+rpart_model <- train(classe ~ ., method="rpart", data=train)
+predictions <- predict(rpart_model,validate)
+confusionMatrix(predictions, validate$classe)
+```
+
+Not so hot, really.  Let's try a more complex model....
+``` {r}
+rforest_model <- randomForest(classe~.,data=train,ntree=1000)
+rforest_model
+predictions <- predict(rforest_model,validate)
+(cm<-confusionMatrix(predictions, validate$classe))
+```
+That's much better! 
+
+Which features help prediction the most?
+``` {r}
+varImpPlot(rforest_model,)
+```
+
+Out of sample error estimate via cross validation:
+``` {r}
+(oos_error <- 1 - cm$overall[1])
+```
+
+Out of sample error = 0.3568394%
+
+## Predicting the test set
+``` {r}
+answers <- predict(rforest_model, testing)
+answers
+```
+
+Prepare the answer files for submission
+``` {r} 
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+dir.create ("predictions")
+setwd ("predictions")
+pml_write_files(answers)
+setwd ("..")
+```
